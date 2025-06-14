@@ -1,0 +1,276 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.svm import SVR
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.ensemble import IsolationForest
+
+# -------------------- Page Setup --------------------
+st.set_page_config(page_title="Smart Energy Management Dashboard", layout="wide")
+st.title("💡 Smart Energy Management Dashboard")
+st.markdown("""
+This dashboard provides tools and insights for:
+- **Energy Management for Households:** Monitor energy usage, reduce bills, and promote energy-efficient habits.
+- **Demand Forecasting for Energy Providers:** Predict demand for better load management and pricing strategies.
+- **Anomaly Detection:** Identify irregular patterns indicating faults or unauthorized usage.
+- **Smart Grid Integration:** Enable predictive analytics for real-time energy optimization.
+- **Environmental Impact:** Reduce carbon footprints and support conservation initiatives.
+""")
+
+# -------------------- Load Data --------------------
+dataset_path = r"C:\\Users\\Mogeeth.M\\Downloads\\powerpluse\\.venv\\Scripts\\predecteddata.csv"
+try:
+    df = pd.read_csv(dataset_path, parse_dates=['Datetime'])
+except FileNotFoundError:
+    st.error(f"Error: CSV file not found at {dataset_path}")
+    st.stop()
+
+st.subheader("Raw Data")
+st.dataframe(df.head())
+
+# -------------------- Data Preprocessing --------------------
+st.subheader("🛠️ Data Preprocessing")
+
+df = df.dropna()
+
+# Date-Time Features
+df['Year'] = df['Datetime'].dt.year
+df['Month'] = df['Datetime'].dt.month
+df['Day'] = df['Datetime'].dt.day
+df['Hour'] = df['Datetime'].dt.hour
+df['Minute'] = df['Datetime'].dt.minute
+df['Second'] = df['Datetime'].dt.second
+df['DayOfWeek'] = df['Datetime'].dt.dayofweek
+
+# Additional Features
+df['Date'] = df['Datetime'].dt.date
+daily_avg = df.groupby('Date')['Global_active_power'].mean().reset_index(name='Daily_Avg_Power')
+df = pd.merge(df, daily_avg, on='Date', how='left')
+df['Is_Peak_Hour'] = df['Hour'].apply(lambda h: 1 if 17 <= h < 20 else 0)
+df['Rolling_Avg_Power_24h'] = df['Global_active_power'].rolling(window=24, min_periods=1).mean()
+df = df.drop('Date', axis=1)
+
+st.subheader("Processed Data Sample")
+st.dataframe(df.head())
+
+# -------------------- Sidebar --------------------
+st.sidebar.markdown("---")
+app_mode = st.sidebar.selectbox("Choose Functionality", (
+    "Energy Usage Monitoring", "Demand Forecasting", "Anomaly Detection", "Environmental Impact"))
+
+# -------------------- EDA Section --------------------
+st.subheader("🔍 Exploratory Data Analysis (EDA)")
+if st.checkbox("Show Full EDA Plots"):
+    # Distribution of Global Active Power
+    st.subheader("Distribution of Global Active Power")
+    fig_power_dist = plt.figure(figsize=(10, 4))
+    sns.histplot(df['Global_active_power'], kde=True)
+    st.pyplot(fig_power_dist)
+
+    # Time series plot of Global Active Power
+    st.subheader("Global Active Power Over Time")
+    fig_power_time = plt.figure(figsize=(14, 5))
+    plt.plot(df['Datetime'], df['Global_active_power'])
+    plt.xlabel("Datetime")
+    plt.ylabel("Global Active Power (kW)")
+    st.pyplot(fig_power_time)
+
+    # Correlation heatmap
+    st.subheader("Correlation Heatmap")
+    corr_matrix = df[['Global_active_power', 'Global_reactive_power', 'Voltage', 'Global_intensity', 'Sub_metering_1', 'Sub_metering_2', 'Sub_metering_3', 'Year', 'Month', 'Day', 'Hour', 'DayOfWeek', 'Daily_Avg_Power', 'Is_Peak_Hour', 'Rolling_Avg_Power_24h']].corr()
+    fig_corr, ax_corr = plt.subplots(figsize=(12, 10))
+    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f")
+    st.pyplot(fig_corr)
+
+    # Box plots for categorical features (if any meaningful ones were created)
+    st.subheader("Box Plots of Categorical Features vs. Global Active Power")
+    categorical_cols = ['Year', 'Month', 'DayOfWeek', 'Is_Peak_Hour']
+    for col in categorical_cols:
+        if col in df.columns:
+            fig_box, ax_box = plt.subplots()
+            sns.boxplot(x=df[col].astype(str), y=df['Global_active_power'])
+            ax_box.set_xlabel(col)
+            ax_box.set_ylabel("Global Active Power (kW)")
+            st.pyplot(fig_box)
+
+    # Pair plots (can be computationally intensive for large datasets)
+    if st.checkbox("Show Pair Plots (May take time)"):
+        st.subheader("Pair Plots")
+        pair_cols = ['Global_active_power', 'Voltage', 'Global_intensity', 'Hour', 'DayOfWeek']
+        sns.pairplot(df[pair_cols])
+        st.pyplot()
+
+# -------------------- Energy Usage Monitoring --------------------
+if app_mode == "Energy Usage Monitoring":
+    st.subheader("🏠 Energy Usage Monitoring for Households")
+    st.info("Track your energy consumption patterns to understand your usage and identify areas for reduction.")
+
+    st.sidebar.subheader("📅 Filter Data")
+    selected_year_monitor = st.sidebar.selectbox("Select Year", sorted(df['Year'].unique()))
+    filtered_df_monitor = df[df['Year'] == selected_year_monitor]
+
+    st.subheader(f"Energy Usage in {selected_year_monitor}")
+    fig_monitor, ax_monitor = plt.subplots(figsize=(14, 5))
+    ax_monitor.plot(filtered_df_monitor['Datetime'], filtered_df_monitor['Global_active_power'], label='Power Consumption (kW)', color='skyblue')
+    ax_monitor.set_title(f'Energy Usage Over Time in {selected_year_monitor}')
+    ax_monitor.set_xlabel("Datetime")
+    ax_monitor.set_ylabel("Global Active Power (kW)")
+    ax_monitor.legend()
+    st.pyplot(fig_monitor)
+
+# -------------------- Demand Forecasting --------------------
+elif app_mode == "Demand Forecasting":
+    st.subheader("📈 Demand Forecasting for Energy Providers")
+    st.info("Predict future energy demand to optimize load management and pricing strategies.")
+
+    st.sidebar.subheader("⚙️ Forecasting Settings")
+    available_cols_forecast = [col for col in df.columns if col != 'Datetime']
+    target_column_forecast = st.sidebar.selectbox("Select Target Column for Forecasting:", available_cols_forecast, index=0)
+    feature_columns_forecast = st.sidebar.multiselect("Select Feature Columns for Forecasting:", [col for col in available_cols_forecast if col != target_column_forecast], default=['Year', 'Month', 'Day', 'Hour', 'DayOfWeek', 'Daily_Avg_Power', 'Is_Peak_Hour', 'Rolling_Avg_Power_24h'])
+    model_choice_forecast = st.sidebar.selectbox("Select Forecasting Model:", ("Linear Regression", "Random Forest", "Gradient Boosting", "SVR", "KNN"))
+
+    st.subheader("🔍 EDA for Demand Forecasting")
+    if st.checkbox("Show EDA Plots for Forecasting"):
+        st.subheader(f"Distribution of {target_column_forecast}")
+        fig_target_dist = plt.figure(figsize=(10, 4))
+        sns.histplot(df[target_column_forecast], kde=True)
+        st.pyplot(fig_target_dist)
+
+        st.subheader(f"{target_column_forecast} Over Time")
+        fig_target_time = plt.figure(figsize=(14, 5))
+        plt.plot(df['Datetime'], df[target_column_forecast])
+        plt.xlabel("Datetime")
+        plt.ylabel(target_column_forecast)
+        st.pyplot(fig_target_time)
+
+        st.subheader(f"Correlation with {target_column_forecast}")
+        corr_with_target = df[feature_columns_forecast + [target_column_forecast]].corr()[target_column_forecast].sort_values(ascending=False)
+        st.bar_chart(corr_with_target)
+
+        st.subheader(f"Scatter Plots of Features vs. {target_column_forecast}")
+        for col in feature_columns_forecast:
+            fig_scatter, ax_scatter = plt.subplots()
+            sns.scatterplot(x=df[col], y=df[target_column_forecast])
+            ax_scatter.set_xlabel(col)
+            ax_scatter.set_ylabel(target_column_forecast)
+            st.pyplot(fig_scatter)
+
+    if st.sidebar.button("Train and Predict"):
+        if target_column_forecast and feature_columns_forecast:
+            X = df[feature_columns_forecast]
+            y = df[target_column_forecast]
+
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+
+            X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+            model_map = {
+                "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
+                "Linear Regression": LinearRegression(),
+                "Gradient Boosting": GradientBoostingRegressor(n_estimators=100, random_state=42),
+                "SVR": SVR(kernel='rbf', C=100, gamma=0.1, epsilon=.1),
+                "KNN": KNeighborsRegressor(n_neighbors=5)
+            }
+
+            model = model_map[model_choice_forecast]
+
+            with st.spinner("Training the forecasting model..."):
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+
+            st.subheader("📈 Demand Forecasting Results")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("RMSE", f"{np.sqrt(mean_squared_error(y_test, y_pred)):.3f}")
+            col2.metric("MAE", f"{mean_absolute_error(y_test, y_pred):.3f}")
+            col3.metric("R² Score", f"{r2_score(y_test, y_pred):.3f}")
+
+            result_df = pd.DataFrame({'Actual': y_test.values, 'Predicted': y_pred})
+            fig_forecast, ax_forecast = plt.subplots(figsize=(10, 5))
+            ax_forecast.plot(result_df.index, result_df['Actual'], label='Actual')
+            ax_forecast.plot(result_df.index, result_df['Predicted'], label='Predicted', alpha=0.7)
+            ax_forecast.set_title("Actual vs Predicted Demand")
+            ax_forecast.legend()
+            st.pyplot(fig_forecast)
+
+# -------------------- Anomaly Detection --------------------
+elif app_mode == "Anomaly Detection":
+    st.subheader("🚨 Anomaly Detection")
+    st.info("Identify irregular patterns in energy consumption.")
+
+    st.sidebar.subheader("⚙️ Anomaly Detection Settings")
+    contamination = st.sidebar.slider("Contamination Level:", 0.01, 0.25, 0.05)
+    anomaly_features = st.sidebar.multiselect("Features:", [col for col in df.columns if col not in ['Datetime', 'Year', 'Month', 'Day', 'Date']], default=['Global_active_power', 'Voltage', 'Global_intensity'])
+
+    st.subheader("🔍 EDA for Anomaly Detection")
+    if st.checkbox("Show EDA Plots for Anomaly Detection"):
+        st.subheader("Distribution of Selected Features")
+        for col in anomaly_features:
+            fig_dist_anomaly, ax_dist_anomaly = plt.subplots()
+            sns.histplot(df[col], kde=True)
+            ax_dist_anomaly.set_title(f"Distribution of {col}")
+            st.pyplot(fig_dist_anomaly)
+
+        st.subheader("Box Plots of Selected Features")
+        for col in anomaly_features:
+            fig_box_anomaly, ax_box_anomaly = plt.subplots()
+            sns.boxplot(y=df[col])
+            ax_box_anomaly.set_title(f"Box Plot of {col}")
+            st.pyplot(fig_box_anomaly)
+
+        st.subheader("Scatter Plots of Feature Pairs")
+        if len(anomaly_features) >= 2:
+            fig_pair_anomaly = sns.pairplot(df[anomaly_features])
+            st.pyplot(fig_pair_anomaly)
+
+    if st.sidebar.button("Detect Anomalies"):
+        if anomaly_features:
+            X_anomaly = df[anomaly_features]
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X_anomaly)
+
+            model = IsolationForest(contamination=contamination, random_state=42)
+            preds = model.fit_predict(X_scaled)
+
+            df['Anomaly'] = preds
+            df['Anomaly'] = df['Anomaly'].map({1: 'Normal', -1: 'Anomaly'})
+
+            st.subheader("Anomaly Detection Results")
+            st.dataframe(df[df['Anomaly'] == 'Anomaly'].head())
+
+            fig_anomaly, ax_anomaly = plt.subplots(figsize=(12, 6))
+            sns.scatterplot(x=df['Datetime'], y=df['Global_active_power'], hue=df['Anomaly'], ax=ax_anomaly, palette={'Normal': 'green', 'Anomaly': 'red'})
+            ax_anomaly.set_title("Energy Consumption with Detected Anomalies")
+            st.pyplot(fig_anomaly)
+
+# -------------------- Environmental Impact --------------------
+elif app_mode == "Environmental Impact":
+    st.subheader("🌍 Environmental Impact")
+    st.info("Understand your carbon footprint from energy use.")
+
+    emission_factor = 0.5  # kg CO2 per kWh
+    total_kwh = df['Global_active_power'].sum() / 1000
+    total_kg = total_kwh * emission_factor
+    total_tonnes = total_kg / 1000
+
+    st.metric("Energy Consumed (kWh)", f"{total_kwh:.2f}")
+    st.metric("Carbon Footprint (kg CO2)", f"{total_kg:.2f}")
+    st.metric("Carbon Footprint (tonnes CO2)", f"{total_tonnes:.3f}")
+
+    st.markdown("""
+    ### Conservation Tips
+    - Use energy-efficient appliances.
+    - Switch to LED lighting.
+    - Turn off unused devices.
+    - Consider solar or renewable options.
+    """)
+
+st.sidebar.markdown("---")
+st.sidebar.info("This dashboard supports smarter and more sustainable energy use.")
