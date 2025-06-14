@@ -1,0 +1,73 @@
+import pandas as pd
+
+# Load the dataset
+data_path = r"C:\Users\Mogeeth.M\Downloads\powerpulse project\code\household_power_consumption.txt"
+try:
+    df = pd.read_csv(data_path, sep=';', low_memory=False)
+except Exception as e:
+    try:
+        df = pd.read_csv(data_path, sep=',', low_memory=False)
+    except Exception as e2:
+        print(f"Error: Could not read the data file. Tried comma and semicolon separators. Error Details: {e}, {e2}")
+        exit()
+
+# 1. Data Understanding and Exploration (minimal, for CSV conversion)
+print("Initial Data Overview:")
+print(df.head())  # Show the first few rows
+print("\nData Summary:")
+print(df.info())  # Show data types and non-null counts
+
+# 2. Data Preprocessing (as before)
+if 'Date' in df.columns and 'Time' in df.columns:
+    df['Datetime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], errors='coerce')
+    df = df.drop(columns=['Date', 'Time'])
+elif 'Datetime' in df.columns:
+    df['Datetime'] = pd.to_datetime(df['Datetime'], errors='coerce')
+else:
+    print("Error: Neither 'Date' and 'Time' columns nor 'Datetime' column found. Ensure your data has proper time information.")
+    exit()
+
+# Convert relevant columns to numeric, coercing errors
+numeric_cols = ['Global_active_power', 'Global_reactive_power', 'Voltage',
+                'Global_intensity', 'Sub_metering_1', 'Sub_metering_2', 'Sub_metering_3']
+for col in numeric_cols:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    else:
+        print(f"Warning: Column '{col}' not found. Skipping numeric conversion.")
+
+# --- Feature Engineering ---
+if 'Datetime' in df.columns:
+    df['Hour'] = df['Datetime'].dt.hour
+    df['DayOfWeek'] = df['Datetime'].dt.dayofweek
+    df['Month'] = df['Datetime'].dt.month
+    df['Year'] = df['Datetime'].dt.year
+    df['DayOfYear'] = df['Datetime'].dt.dayofyear
+    df['WeekOfYear'] = df['Datetime'].dt.isocalendar().week.astype(int)
+    df['TimeOfDay'] = df['Datetime'].dt.hour + df['Datetime'].dt.minute / 60.0
+    df['Peak_Hour'] = ((df['Hour'] >= 17) & (df['Hour'] <= 20)).astype(int)
+    df['Off_Peak_Hour'] = ((df['Hour'] >= 23) | (df['Hour'] <= 6)).astype(int)
+
+    # Calculate rolling averages (more robust handling of NaNs)
+    df['Rolling_Avg_24h'] = df['Global_active_power'].rolling(window=24, min_periods=12).mean()
+    df['Rolling_Avg_72h'] = df['Global_active_power'].rolling(window=72, min_periods=36).mean()
+
+    # Create interaction features
+    df['Voltage_Intensity'] = df['Voltage'] * df['Global_intensity']
+else:
+    print("Warning: No 'Datetime' column found to create time-based features.")
+
+# Handle remaining missing values using imputation after feature engineering
+for col in numeric_cols:
+    if col in df.columns:
+        df[col] = df[col].fillna(df[col].median())
+    else:
+        print(f"Warning: Column '{col}' not found. Skipping missing value imputation.")
+if 'Rolling_Avg_24h' in df.columns:
+    df['Rolling_Avg_24h'] = df['Rolling_Avg_24h'].fillna(df['Global_active_power'].median())
+if 'Rolling_Avg_72h' in df.columns:
+    df['Rolling_Avg_72h'] = df['Rolling_Avg_72h'].fillna(df['Global_active_power'].median())
+# 3. Save to CSV
+csv_file_path = "preprocessed_energy_data.csv"  
+df.to_csv(csv_file_path, index=False)  
+print(f"\nData saved to CSV file: {csv_file_path}")
